@@ -2,6 +2,11 @@ import torch
 import triton
 import triton.language as tl
 
+from setuptools import setup
+from torch.utils.cpp_extension import load
+
+add_cuda = load(name='add_cuda', sources=["interface.cpp", "kernels.cu"])
+
 @triton.jit
 def add_kernel(x_ptr, y_ptr, output_ptr, n_elements, BLOCK_SIZE: tl.constexpr):
   pid = tl.program_id(axis=0)
@@ -25,9 +30,9 @@ def add_triton(x: torch.Tensor, y: torch.Tensor):
       x_vals=[2**i for i in range(12, 28, 1)], 
       x_log=True,
       line_arg='provider',
-      line_vals=['triton', 'torch'],
-      line_names=['Triton', 'Torch'],
-      styles=[('blue', '-'), ('green', '-')],
+      line_vals=['triton', 'torch', 'cuda'],
+      line_names=['Triton', 'Torch', 'CUDA'],
+      styles=[('blue', '-'), ('red', '-'), ('green', '-')],
       ylabel='time[ms]',
       plot_name='vector addition timings',
       args={}))
@@ -39,6 +44,9 @@ def benchmark(size, provider):
     ms = triton.testing.do_bench(lambda: x + y)
   if provider == 'triton':
     ms = triton.testing.do_bench(lambda: add_triton(x,y))
+  if provider == 'cuda':
+    ms = triton.testing.do_bench(lambda: add_cuda.add_cuda(x, y, size))
   return ms
+
 
 benchmark.run(print_data=True, show_plots=True)

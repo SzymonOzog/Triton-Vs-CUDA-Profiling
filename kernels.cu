@@ -48,29 +48,26 @@ __global__ void softmax_kernel(scalar_t* __restrict__ a, scalar_t* __restrict__ 
   }
 }
 
-#ifndef BLOCK_DIM_X
-#define BLOCK_DIM_X 32
+#ifndef BLOCK_DIM_Y
+#define BLOCK_DIM_Y 32 
 #endif
 
-#ifndef BLOCK_DIM_Y
-#define BLOCK_DIM_Y 16 
-#endif
 
 template <typename scalar_t>
 __global__ void softmax_kernel2(scalar_t* __restrict__ a, scalar_t* __restrict__ b, int w, int h)
 {
-  int col = blockIdx.x*blockDim.x + threadIdx.x;
-  int row = blockIdx.y*blockDim.y + threadIdx.y;
+  int row = blockIdx.x*blockDim.x + threadIdx.x;
   int ty = threadIdx.y;
-  int stride = ceil(w/blockDim.x);
+  int stride_b = ceil(w/blockDim.y);
   __shared__ scalar_t reduction[BLOCK_DIM_Y]; 
-  if (row < h && col < w)
+  if (row < h)
   {
     scalar_t maxval = 0;
-    for (int i = threadIdx.x; i<w; i+=stride)
+    for (int i = ty; i<w; i+=stride_b)
     {
       maxval = max(maxval, a[row*w + i]);
     }
+
     reduction[ty] = maxval;
     for(int stride = BLOCK_DIM_Y/2; stride>=1; stride/=2)
     {
@@ -80,6 +77,7 @@ __global__ void softmax_kernel2(scalar_t* __restrict__ a, scalar_t* __restrict__
         reduction[ty] = max(reduction[ty], reduction[ty+stride]);
       }
     }
+
     __syncthreads();
     maxval = reduction[0];
     scalar_t divisor = 0.f;
@@ -87,9 +85,15 @@ __global__ void softmax_kernel2(scalar_t* __restrict__ a, scalar_t* __restrict__
     {
       divisor += __expf(a[row*w + i] - maxval);
     }
-    b[row*w + col] = __expf(a[row*w + col]-maxval)/(divisor);
+
+    for (int i = ty; i<w; i+=stride_b)
+    {
+      b[row*w + i] = __expf(a[row*w + i]-maxval)/(divisor);
+    }
+
   }
 }
+
 
 torch::Tensor softmax_cu(torch::Tensor x)
 {
@@ -97,8 +101,8 @@ torch::Tensor softmax_cu(torch::Tensor x)
   int rows = x.size(0);
   int cols = x.size(1);
 
-  const dim3 block_size = dim3(BLOCK_DIM_X, BLOCK_DIM_Y, 1);
-  const dim3 grid_size = dim3(std::ceil(cols/block_size.x), std::ceil(rows/block_size.y), 1);
+  const dim3 block_size = dim3(1, BLOCK_DIM_Y, 1);
+  const dim3 grid_size = dim3(cols/block_size.x, 1, 1);
 
   AT_DISPATCH_FLOATING_TYPES(x.type(), "softmax_cuda", ([&] {
         softmax_kernel2<scalar_t><<<grid_size, block_size>>>

@@ -94,6 +94,57 @@ __global__ void softmax_kernel2(scalar_t* __restrict__ a, scalar_t* __restrict__
   }
 }
 
+template <typename scalar_t>
+__global__ void softmax_kernel3(scalar_t* __restrict__ a, scalar_t* __restrict__ b, int w, int h)
+{
+  int row = blockIdx.x*blockDim.x + threadIdx.x;
+  int ty = threadIdx.y;
+  int stride_b = ceil(w/blockDim.y);
+  __shared__ scalar_t reduction[BLOCK_DIM_Y]; 
+  if (row < h)
+  {
+    scalar_t maxval = 0;
+    for (int i = ty; i<w; i+=stride_b)
+    {
+      maxval = max(maxval, a[row*w + i]);
+    }
+
+    reduction[ty] = maxval;
+    for(int stride = BLOCK_DIM_Y/2; stride>=1; stride/=2)
+    {
+      __syncthreads();
+      if (ty < stride)
+      {
+        reduction[ty] = max(reduction[ty], reduction[ty+stride]);
+      }
+    }
+
+    __syncthreads();
+    maxval = reduction[0];
+
+    scalar_t divisor = 0.f;
+    for (int i = ty; i<w; i+=stride_b)
+    {
+      divisor += __expf(a[row*w + i] - maxval);
+    }
+    reduction[ty] = divisor;
+    for(int stride = BLOCK_DIM_Y/2; stride>=1; stride/=2)
+    {
+      __syncthreads();
+      if (ty < stride)
+      {
+        reduction[ty] = reduction[ty] + reduction[ty+stride];
+      }
+    }
+    __syncthreads();
+    divisor = reduction[0];
+
+    for (int i = ty; i<w; i+=stride_b)
+    {
+      b[row*w + i] = __expf(a[row*w + i]-maxval)/divisor;
+    }
+  }
+}
 
 torch::Tensor softmax_cu(torch::Tensor x)
 {
@@ -105,7 +156,7 @@ torch::Tensor softmax_cu(torch::Tensor x)
   const dim3 grid_size = dim3(cols/block_size.x, 1, 1);
 
   AT_DISPATCH_FLOATING_TYPES(x.type(), "softmax_cuda", ([&] {
-        softmax_kernel2<scalar_t><<<grid_size, block_size>>>
+        softmax_kernel3<scalar_t><<<grid_size, block_size>>>
           (x.data_ptr<scalar_t>(), out.data_ptr<scalar_t>(), rows, cols);
         }));
   return out;

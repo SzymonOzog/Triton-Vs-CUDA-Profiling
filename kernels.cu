@@ -2,6 +2,10 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 
+#ifndef BLOCK_DIM_Y
+#define BLOCK_DIM_Y 32 
+#endif
+
 template <typename scalar_t>
 __global__ void add_kernel(scalar_t* __restrict__ x, scalar_t* __restrict__ y, scalar_t* __restrict__ out,  int size)
 {
@@ -47,10 +51,6 @@ __global__ void softmax_kernel(scalar_t* __restrict__ a, scalar_t* __restrict__ 
     b[row*w + col] = __expf(a[row*w + col]-maxval)/(divisor);
   }
 }
-
-#ifndef BLOCK_DIM_Y
-#define BLOCK_DIM_Y 32 
-#endif
 
 
 template <typename scalar_t>
@@ -134,6 +134,74 @@ __global__ void softmax_kernel3(scalar_t* __restrict__ a, scalar_t* __restrict__
       if (ty < stride)
       {
         reduction[ty] = reduction[ty] + reduction[ty+stride];
+      }
+    }
+    __syncthreads();
+    divisor = reduction[0];
+
+    for (int i = ty; i<w; i+=stride_b)
+    {
+      b[row*w + i] = __expf(a[row*w + i]-maxval)/divisor;
+    }
+  }
+}
+
+template <typename scalar_t>
+__global__ void softmax_kernel4(scalar_t* __restrict__ a, scalar_t* __restrict__ b, int w, int h)
+{
+  int row = blockIdx.x*blockDim.x + threadIdx.x;
+  int ty = threadIdx.y;
+  int stride_b = ceil(w/blockDim.y);
+  __shared__ scalar_t reduction[BLOCK_DIM_Y/2]; 
+  if (row < h)
+  {
+    scalar_t maxval = 0;
+    for (int i = ty; i<w; i+=stride_b)
+    {
+      maxval = max(maxval, a[row*w + i]);
+    }
+
+    if (ty >= BLOCK_DIM_Y/2)
+    {
+      reduction[ty - BLOCK_DIM_Y/2] = maxval;
+    }
+    for(int stride = BLOCK_DIM_Y/2; stride>=1; stride/=2)
+    {
+      __syncthreads();
+      if (ty < stride)
+      {
+        maxval = max(maxval, reduction[ty]);
+        if (ty >= stride/2)
+        {
+          reduction[ty - stride/2] = maxval;
+        }
+      }
+    }
+
+    __syncthreads();
+    maxval = reduction[0];
+
+    scalar_t divisor = 0.f;
+    for (int i = ty; i<w; i+=stride_b)
+    {
+      divisor += __expf(a[row*w + i] - maxval);
+    }
+
+    if (ty >= BLOCK_DIM_Y/2)
+    {
+      reduction[ty - BLOCK_DIM_Y/2] = divisor;
+    }
+
+    for(int stride = BLOCK_DIM_Y/2; stride>=1; stride/=2)
+    {
+      __syncthreads();
+      if (ty < stride)
+      {
+        divisor = divisor + reduction[ty];
+        if (ty >= stride/2)
+        {
+          reduction[ty - stride/2] = divisor;
+        }
       }
     }
     __syncthreads();

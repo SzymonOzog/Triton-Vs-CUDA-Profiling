@@ -58,7 +58,7 @@ __global__ void softmax_kernel2(scalar_t* __restrict__ a, scalar_t* __restrict__
 {
   int row = blockIdx.x*blockDim.x + threadIdx.x;
   int ty = threadIdx.y;
-  int stride_b = ceil(w/blockDim.y);
+  int stride_b = BLOCK_DIM_Y;
   __shared__ scalar_t reduction[BLOCK_DIM_Y]; 
   if (row < h)
   {
@@ -99,7 +99,7 @@ __global__ void softmax_kernel3(scalar_t* __restrict__ a, scalar_t* __restrict__
 {
   int row = blockIdx.x*blockDim.x + threadIdx.x;
   int ty = threadIdx.y;
-  int stride_b = ceil(w/blockDim.y);
+  int stride_b = BLOCK_DIM_Y;
   __shared__ scalar_t reduction[BLOCK_DIM_Y]; 
   if (row < h)
   {
@@ -151,7 +151,7 @@ __global__ void softmax_kernel4(scalar_t* __restrict__ a, scalar_t* __restrict__
 {
   int row = blockIdx.x*blockDim.x + threadIdx.x;
   int ty = threadIdx.y;
-  int stride_b = ceil(w/blockDim.y);
+  int stride_b = BLOCK_DIM_Y;
   __shared__ scalar_t reduction[BLOCK_DIM_Y/2]; 
   if (row < h)
   {
@@ -217,15 +217,15 @@ __global__ void softmax_kernel4(scalar_t* __restrict__ a, scalar_t* __restrict__
 torch::Tensor softmax_cu(torch::Tensor x)
 {
   auto out = torch::zeros_like(x);
-  int rows = x.size(0);
-  int cols = x.size(1);
+  int h = x.size(0);
+  int w = x.size(1);
 
   const dim3 block_size = dim3(1, BLOCK_DIM_Y, 1);
-  const dim3 grid_size = dim3(cols/block_size.x, 1, 1);
+  const dim3 grid_size = dim3(h/block_size.x, 1, 1);
 
   AT_DISPATCH_FLOATING_TYPES(x.type(), "softmax_cuda", ([&] {
-        softmax_kernel3<scalar_t><<<grid_size, block_size>>>
-          (x.data_ptr<scalar_t>(), out.data_ptr<scalar_t>(), rows, cols);
+        softmax_kernel4<scalar_t><<<grid_size, block_size>>>
+          (x.data_ptr<scalar_t>(), out.data_ptr<scalar_t>(), w, h);
         }));
   return out;
 }

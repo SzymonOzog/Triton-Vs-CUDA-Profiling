@@ -58,12 +58,11 @@ __global__ void softmax_kernel2(scalar_t* __restrict__ a, scalar_t* __restrict__
 {
   int row = blockIdx.x*blockDim.x + threadIdx.x;
   int ty = threadIdx.y;
-  int stride_b = BLOCK_DIM_Y;
   __shared__ scalar_t reduction[BLOCK_DIM_Y]; 
   if (row < h)
   {
     scalar_t maxval = 0;
-    for (int i = ty; i<w; i+=stride_b)
+    for (int i = ty; i<w; i+=BLOCK_DIM_Y)
     {
       maxval = max(maxval, a[row*w + i]);
     }
@@ -86,7 +85,7 @@ __global__ void softmax_kernel2(scalar_t* __restrict__ a, scalar_t* __restrict__
       divisor += __expf(a[row*w + i] - maxval);
     }
 
-    for (int i = ty; i<w; i+=stride_b)
+    for (int i = ty; i<w; i+=BLOCK_DIM_Y)
     {
       b[row*w + i] = __expf(a[row*w + i]-maxval)/(divisor);
     }
@@ -99,12 +98,11 @@ __global__ void softmax_kernel3(scalar_t* __restrict__ a, scalar_t* __restrict__
 {
   int row = blockIdx.x*blockDim.x + threadIdx.x;
   int ty = threadIdx.y;
-  int stride_b = BLOCK_DIM_Y;
   __shared__ scalar_t reduction[BLOCK_DIM_Y]; 
   if (row < h)
   {
     scalar_t maxval = 0;
-    for (int i = ty; i<w; i+=stride_b)
+    for (int i = ty; i<w; i+=BLOCK_DIM_Y)
     {
       maxval = max(maxval, a[row*w + i]);
     }
@@ -123,7 +121,7 @@ __global__ void softmax_kernel3(scalar_t* __restrict__ a, scalar_t* __restrict__
     maxval = reduction[0];
 
     scalar_t divisor = 0.f;
-    for (int i = ty; i<w; i+=stride_b)
+    for (int i = ty; i<w; i+=BLOCK_DIM_Y)
     {
       divisor += __expf(a[row*w + i] - maxval);
     }
@@ -139,7 +137,7 @@ __global__ void softmax_kernel3(scalar_t* __restrict__ a, scalar_t* __restrict__
     __syncthreads();
     divisor = reduction[0];
 
-    for (int i = ty; i<w; i+=stride_b)
+    for (int i = ty; i<w; i+=BLOCK_DIM_Y)
     {
       b[row*w + i] = __expf(a[row*w + i]-maxval)/divisor;
     }
@@ -151,12 +149,11 @@ __global__ void softmax_kernel4(scalar_t* __restrict__ a, scalar_t* __restrict__
 {
   int row = blockIdx.x*blockDim.x + threadIdx.x;
   int ty = threadIdx.y;
-  int stride_b = BLOCK_DIM_Y;
   __shared__ scalar_t reduction[BLOCK_DIM_Y/2]; 
   if (row < h)
   {
     scalar_t maxval = 0;
-    for (int i = ty; i<w; i+=stride_b)
+    for (int i = ty; i<w; i+=BLOCK_DIM_Y)
     {
       maxval = max(maxval, a[row*w + i]);
     }
@@ -182,7 +179,7 @@ __global__ void softmax_kernel4(scalar_t* __restrict__ a, scalar_t* __restrict__
     maxval = reduction[0];
 
     scalar_t divisor = 0.f;
-    for (int i = ty; i<w; i+=stride_b)
+    for (int i = ty; i<w; i+=BLOCK_DIM_Y)
     {
       divisor += __expf(a[row*w + i] - maxval);
     }
@@ -207,12 +204,13 @@ __global__ void softmax_kernel4(scalar_t* __restrict__ a, scalar_t* __restrict__
     __syncthreads();
     divisor = reduction[0];
 
-    for (int i = ty; i<w; i+=stride_b)
+    for (int i = ty; i<w; i+=BLOCK_DIM_Y)
     {
       b[row*w + i] = __expf(a[row*w + i]-maxval)/divisor;
     }
   }
 }
+
 
 torch::Tensor softmax_cu(torch::Tensor x)
 {

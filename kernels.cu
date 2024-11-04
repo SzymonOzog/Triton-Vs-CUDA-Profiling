@@ -211,6 +211,80 @@ __global__ void softmax_kernel4(scalar_t* __restrict__ a, scalar_t* __restrict__
   }
 }
 
+template <typename scalar_t>
+__global__ void softmax_kernel5(scalar_t* __restrict__ a, scalar_t* __restrict__ b, int w, int h)
+{
+  int row = blockIdx.x*blockDim.x + threadIdx.x;
+  int ty = threadIdx.y;
+  __shared__ scalar_t reduction[BLOCK_DIM_Y/2]; 
+  if (row < h)
+  {
+    scalar_t maxval = 0;
+    for (int i = ty; i<w/4; i+=BLOCK_DIM_Y)
+    {
+      float4 val = reinterpret_cast<float4*>(&a[row*w + i*4])[0];
+      maxval = max(maxval, val.x);
+      maxval = max(maxval, val.y);
+      maxval = max(maxval, val.z);
+      maxval = max(maxval, val.w);
+    }
+
+    if (ty >= BLOCK_DIM_Y/2)
+    {
+      reduction[ty - BLOCK_DIM_Y/2] = maxval;
+    }
+    for(int stride = BLOCK_DIM_Y/2; stride>=1; stride/=2)
+    {
+      __syncthreads();
+      if (ty < stride)
+      {
+        maxval = max(maxval, reduction[ty]);
+        if (ty >= stride/2)
+        {
+          reduction[ty - stride/2] = maxval;
+        }
+      }
+    }
+
+    __syncthreads();
+    maxval = reduction[0];
+
+    scalar_t divisor = 0.f;
+    for (int i = ty; i<w/4; i+=BLOCK_DIM_Y)
+    {
+      float4 val = reinterpret_cast<float4*>(&a[row*w + i*4])[0];
+      divisor += __expf(val.x - maxval);
+      divisor += __expf(val.y - maxval);
+      divisor += __expf(val.z - maxval);
+      divisor += __expf(val.w - maxval);
+    }
+
+    if (ty >= BLOCK_DIM_Y/2)
+    {
+      reduction[ty - BLOCK_DIM_Y/2] = divisor;
+    }
+
+    for(int stride = BLOCK_DIM_Y/2; stride>=1; stride/=2)
+    {
+      __syncthreads();
+      if (ty < stride)
+      {
+        divisor = divisor + reduction[ty];
+        if (ty >= stride/2)
+        {
+          reduction[ty - stride/2] = divisor;
+        }
+      }
+    }
+    __syncthreads();
+    divisor = reduction[0];
+
+    for (int i = ty; i<w; i+=BLOCK_DIM_Y)
+    {
+      b[row*w + i] = __expf(a[row*w + i]-maxval)/divisor;
+    }
+  }
+}
 
 torch::Tensor softmax_cu(torch::Tensor x)
 {
@@ -222,7 +296,7 @@ torch::Tensor softmax_cu(torch::Tensor x)
   const dim3 grid_size = dim3(h/block_size.x, 1, 1);
 
   AT_DISPATCH_FLOATING_TYPES(x.type(), "softmax_cuda", ([&] {
-        softmax_kernel4<scalar_t><<<grid_size, block_size>>>
+        softmax_kernel5<scalar_t><<<grid_size, block_size>>>
           (x.data_ptr<scalar_t>(), out.data_ptr<scalar_t>(), w, h);
         }));
   return out;

@@ -567,10 +567,10 @@ torch::Tensor softmax_cu(torch::Tensor x)
   int w = x.size(1);
 
   const dim3 block_size = dim3(1, BLOCK_DIM_Y, 1);
-  const dim3 grid_size = dim3(h/block_size.x, 1, 1);
+  const dim3 grid_size = dim3(h, 1, 1);
 
   AT_DISPATCH_FLOATING_TYPES(x.type(), "softmax_cuda", ([&] {
-        softmax_kernel6<scalar_t><<<grid_size, block_size>>>
+        softmax_kernel8<scalar_t><<<grid_size, block_size>>>
           (x.data_ptr<scalar_t>(), out.data_ptr<scalar_t>(), w, h);
         }));
   return out;

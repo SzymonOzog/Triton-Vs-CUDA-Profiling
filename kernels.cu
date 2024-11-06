@@ -290,7 +290,7 @@ template <typename scalar_t>
 __global__ void softmax_kernel6(scalar_t* __restrict__ a, scalar_t* __restrict__ b, int w, int h)
 {
   int row = blockIdx.x*blockDim.x + threadIdx.x;
-  int ty = threadIdx.x;
+  int ty = threadIdx.y;
   int warp_id = ty/32;
   __shared__ scalar_t reduction[BLOCK_DIM_Y/32]; 
   if (row < h)

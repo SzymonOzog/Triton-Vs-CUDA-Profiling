@@ -3,7 +3,7 @@
 #include <cuda_runtime.h>
 
 #ifndef BLOCK_DIM_Y
-#define BLOCK_DIM_Y 32 
+#define BLOCK_DIM_Y 1024
 #endif
 
 template <typename scalar_t>

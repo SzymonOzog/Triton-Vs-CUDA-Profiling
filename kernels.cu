@@ -573,6 +573,112 @@ __global__ void softmax_kernel8(scalar_t* __restrict__ a, scalar_t* __restrict__
   }
 }
 
+
+template <typename scalar_t>
+__global__ void softmax_kernel9(scalar_t* __restrict__ a, scalar_t* __restrict__ b, int w, int h)
+{
+  int row = blockIdx.x;
+  int ty = threadIdx.y;
+  int warp_id = ty/32;
+  __shared__ scalar_t reduction_max[BLOCK_DIM_Y/32]; 
+  __shared__ scalar_t reduction_div[BLOCK_DIM_Y/32]; 
+  if (row < h)
+  {
+    scalar_t maxval = 0;
+    scalar_t divisor = 0;
+    scalar_t old_maxval = 0;
+    for (int i = ty; i<w/4; i+=BLOCK_DIM_Y*UNROLL_FACTOR)
+    {
+      #pragma unroll
+      for (int u = 0; u<UNROLL_FACTOR; u++)
+      {
+        float4 val = reinterpret_cast<float4*>(&a[row*w + u*BLOCK_DIM_Y*4 + i*4])[0];
+        maxval = fmaxf(maxval, val.x);
+        maxval = fmaxf(maxval, val.y);
+        maxval = fmaxf(maxval, val.z);
+        maxval = fmaxf(maxval, val.w);
+        if (maxval > old_maxval)
+        {
+          divisor *= __expf(old_maxval - maxval);
+          old_maxval = maxval;
+        }
+        divisor += __expf(val.x - maxval);
+        divisor += __expf(val.y - maxval);
+        divisor += __expf(val.z - maxval);
+        divisor += __expf(val.w - maxval);
+      }
+    }
+    scalar_t incoming_divisor = 0;
+    scalar_t incoming_maxval = 0;
+    #pragma unroll
+    for (int mask = 16; mask>0; mask/=2)
+    {
+      incoming_maxval = __shfl_xor_sync(0xffffffff, maxval, mask, 32);
+      incoming_divisor = __shfl_xor_sync(0xffffffff, divisor, mask, 32);
+      if (incoming_maxval > maxval)
+      {
+        divisor *= __expf(maxval - incoming_maxval);
+        maxval = incoming_maxval;
+      }
+      else 
+      {
+        incoming_divisor *= __expf(incoming_maxval - maxval);
+      }
+      divisor += incoming_divisor;
+    }
+
+    if (ty%32 == 0)
+    {
+      reduction_max[warp_id] = maxval;
+      reduction_div[warp_id] = divisor;
+    }
+    __syncthreads();
+    if (warp_id == 0)
+    {
+        maxval = ty < BLOCK_DIM_Y/32 ? reduction_max[ty] : 0;
+        divisor = ty < BLOCK_DIM_Y/32 ? reduction_div[ty] : 0;
+        #pragma unroll
+        for (int mask = 16; mask>0; mask/=2)
+        {
+          incoming_maxval = __shfl_xor_sync(0xffffffff, maxval, mask, 32);
+          incoming_divisor = __shfl_xor_sync(0xffffffff, divisor, mask, 32);
+          if (incoming_maxval > maxval)
+          {
+            divisor *= __expf(maxval - incoming_maxval);
+            maxval = incoming_maxval;
+          }
+          else 
+          {
+            incoming_divisor *= __expf(incoming_maxval - maxval);
+          }
+          divisor += incoming_divisor;
+        }
+    }
+    if (ty == 0)
+    {
+        reduction_max[0] = maxval;
+        reduction_div[0] = divisor;
+    }
+    __syncthreads();
+    maxval = reduction_max[0];
+    divisor = reduction_div[0];
+
+    for (int i = ty; i<w/4; i+=BLOCK_DIM_Y*UNROLL_FACTOR)
+    {
+      #pragma unroll
+      for (int u = 0; u<UNROLL_FACTOR; u++)
+      {
+        float4 val = reinterpret_cast<float4*>(&a[row*w + u*BLOCK_DIM_Y*4 + i*4])[0];
+        val.x = __expf(val.x-maxval)/divisor;
+        val.y = __expf(val.y-maxval)/divisor;
+        val.z = __expf(val.z-maxval)/divisor;
+        val.w = __expf(val.w-maxval)/divisor;
+        reinterpret_cast<float4*>(&b[row*w + u*BLOCK_DIM_Y*4 + i*4])[0] = val;
+      }
+    }
+  }
+}
+
 torch::Tensor softmax_cu(torch::Tensor x)
 {
   auto out = torch::empty_like(x);
@@ -583,7 +689,7 @@ torch::Tensor softmax_cu(torch::Tensor x)
   const dim3 grid_size = dim3(h, 1, 1);
 
   AT_DISPATCH_FLOATING_TYPES(x.type(), "softmax_cuda", ([&] {
-        softmax_kernel8<scalar_t><<<grid_size, block_size>>>
+        softmax_kernel9<scalar_t><<<grid_size, block_size>>>
           (x.data_ptr<scalar_t>(), out.data_ptr<scalar_t>(), w, h);
         }));
   return out;

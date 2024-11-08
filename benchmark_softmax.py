@@ -6,7 +6,7 @@ from torch.utils.cpp_extension import load
 from benchmark import benchmark
 torch.set_default_device('cuda')
 
-cuda = load(name='softmax_cuda', sources=["interface.cpp", "kernels.cu"])
+cuda = load(name='softmax_cuda', sources=["interface.cpp", "kernels.cu"], verbose=True, extra_cuda_cflags=[f"-lineinfo --use_fast_math -O3" ])
 
 def naive_softmax(x):
     """Compute row-wise softmax of X using native pytorch
@@ -68,7 +68,7 @@ def softmax_triton(x):
     n_rows, n_cols = x.shape
     BLOCK_SIZE = triton.next_power_of_2(n_cols)
     num_warps = 8
-    num_stages = 4 if SIZE_SMEM > 200000 else 2
+    num_stages = 4 if SIZE_SMEM > 200000 else 1
     y = torch.empty_like(x)
     kernel, num_programs = kernels.get(BLOCK_SIZE, (None, 0))
     if kernel is None:
@@ -87,13 +87,13 @@ def softmax_triton(x):
     kernel[(num_programs, 1, 1)](y, x, x.stride(0), y.stride(0), n_rows, n_cols,)
     return y
 
-size = 1024 
-x = torch.rand(size, size, device='cuda')
-y = naive_softmax(x)
+x = torch.rand(128, 2**16, device='cuda')
+
+y = torch.softmax(x, dim=-1)
 y2 = softmax_triton(x)
 y3 = cuda.softmax_cuda(x)
 
-assert torch.allclose(y, y2, atol=1e-2, rtol=1e-2), (y, y2)
-assert torch.allclose(y, y3, atol=1e-2, rtol=1e-2), (y, y3)
+assert torch.allclose(y, y2, atol=1e-6, rtol=1e-6), (y, y2)
+assert torch.allclose(y, y3, atol=1e-6, rtol=1e-6), (y, y3)
 
-benchmark(lambda: naive_softmax(x), lambda: softmax_triton(x), lambda: cuda.softmax_cuda(x))
+benchmark(lambda: torch.softmax(x, dim=-1), lambda: softmax_triton(x), lambda: cuda.softmax_cuda(x), bench_steps=10)

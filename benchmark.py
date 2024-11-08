@@ -42,3 +42,4 @@ def benchmark(fn_torch, fn_triton, fn_cuda, bench_steps=400):
         out = fn_cuda() 
         torch.cuda.synchronize()
   prof.export_chrome_trace("trace.json")
+  return time_torch, time_triton, time_cuda
